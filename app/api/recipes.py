@@ -56,7 +56,8 @@ class RecipeResponse(BaseModel):
 async def generate_recipes(request: GenerateRecipeRequest):
     """Generate recipe recommendations using Gemini Flash"""
     try:
-        logger.info("Starting recipe generation")
+        logger.info("=== RECIPE GENERATION DEBUG: Starting recipe generation ===")
+        logger.info(f"RECIPE GENERATION DEBUG: Request parameters - mustUseIngredients: {request.mustUseIngredients}, preferenceOverrides: {request.preferenceOverrides}")
         
         # Get available ingredients from Firebase
         ingredients_data = await firebase_service.get_collection("ingredients")
@@ -84,126 +85,141 @@ async def generate_recipes(request: GenerateRecipeRequest):
         }
         difficulty = difficulty_map.get(cooking_time, "medium")
         
-        # Generate multiple recipe suggestions
+        # Generate single recipe suggestion (FIXED: was generating multiple recipes)
         recipes = []
-        cuisines_to_try = cuisine_preferences if cuisine_preferences else ["International", "Italian", "American"]
+        cuisines_to_try = cuisine_preferences if cuisine_preferences else ["International"]
         
-        for i, cuisine in enumerate(cuisines_to_try[:3]):  # Generate up to 3 recipes
+        # DUPLICATION FIX: Only generate ONE recipe, not multiple
+        selected_cuisine = cuisines_to_try[0]  # Take the first (or only) cuisine preference
+        
+        logger.info(f"RECIPE GENERATION DEBUG: Generating SINGLE recipe for cuisine: {selected_cuisine}")
+        logger.info(f"RECIPE GENERATION DEBUG: DUPLICATION FIX APPLIED - will create only 1 recipe with 1 image")
+        
+        try:
+            logger.info(f"RECIPE GENERATION DEBUG: Starting recipe generation for cuisine: {selected_cuisine}")
+            # Generate recipe using Gemini service
+            recipe_dict = await gemini_service.generate_recipe(
+                ingredients=available_ingredients,
+                cuisine_preference=selected_cuisine,
+                difficulty=difficulty
+            )
+                
+            # Calculate match score based on available ingredients
+            match_score = calculate_match_score(recipe_dict.get("ingredients", []), available_ingredients)
+            
+            # Create recipe ID
+            recipe_id = str(uuid.uuid4())
+            recipe_name = recipe_dict.get("name", "Generated Recipe")
+            recipe_description = recipe_dict.get("description", "")
+                
+            # Generate image for the recipe with comprehensive error handling
+            logger.info(f"IMAGE GENERATION DEBUG: Starting image generation for recipe: {recipe_name}")
+            image_url = None
+            image_generation_attempted = False
+            
             try:
-                # Generate recipe using Gemini service
-                recipe_dict = await gemini_service.generate_recipe(
-                    ingredients=available_ingredients,
-                    cuisine_preference=cuisine,
-                    difficulty=difficulty
-                )
-                
-                # Calculate match score based on available ingredients
-                match_score = calculate_match_score(recipe_dict.get("ingredients", []), available_ingredients)
-                
-                # Create recipe ID
-                recipe_id = str(uuid.uuid4())
-                recipe_name = recipe_dict.get("name", "Generated Recipe")
-                recipe_description = recipe_dict.get("description", "")
-                
-                # Generate image for the recipe with comprehensive error handling
-                logger.info(f"Generating image for recipe: {recipe_name}")
-                image_url = None
-                image_generation_attempted = False
-                
-                try:
-                    # Only attempt image generation if we have valid inputs
-                    if recipe_name and recipe_name.strip():
-                        image_generation_attempted = True
-                        logger.debug(f"Attempting image generation for: {recipe_name}")
-                        
-                        image_url = await gemini_service.generate_recipe_image(
-                            recipe_name=recipe_name,
-                            recipe_description=recipe_description or "A delicious recipe"
-                        )
-                        
-                        if image_url:
-                            logger.info(f"Successfully generated image for recipe: {recipe_name}")
-                            logger.info(f"IMAGE FIX: Received image URL from Gemini service: {image_url}")
-                            if image_url.startswith('http'):
-                                logger.info(f"IMAGE FIX: URL appears to be Firebase Storage URL - SUCCESS!")
-                            else:
-                                logger.warning(f"IMAGE FIX: URL appears to be local path - Firebase upload may have failed")
-                        else:
-                            logger.warning(f"Image generation returned None for recipe: {recipe_name}")
-                    else:
-                        logger.warning(f"Skipping image generation due to invalid recipe name: '{recipe_name}'")
-                        
-                except Exception as img_error:
-                    logger.error(f"Error generating image for recipe '{recipe_name}': {img_error}", exc_info=True)
-                    # Continue with recipe creation even if image generation fails
-                    image_url = None
-                
-                # Log final image generation status
-                if image_generation_attempted:
-                    if image_url:
-                        logger.info(f"Image generation completed successfully for recipe: {recipe_name}")
-                    else:
-                        logger.warning(f"Image generation failed for recipe: {recipe_name}, proceeding without image")
-                else:
-                    logger.info(f"Image generation skipped for recipe: {recipe_name}")
-                
-                # Parse time values for Swift compatibility
-                prep_time_str = recipe_dict.get("prepTime", "15 minutes")
-                cook_time_str = recipe_dict.get("cookTime", "30 minutes")
-                prep_minutes = _parse_time_to_minutes(prep_time_str)
-                cook_minutes = _parse_time_to_minutes(cook_time_str)
-                total_minutes = prep_minutes + cook_minutes
-                
-                # Convert nutrition info to strings
-                nutrition_info = recipe_dict.get("nutritionalInfo", {})
-                nutrition_strings = {}
-                for key, value in nutrition_info.items():
-                    if value is not None:
-                        nutrition_strings[key] = str(value)
-                    else:
-                        nutrition_strings[key] = "0"
-                
-                recipe_data = {
-                    "id": recipe_id,
-                    "name": recipe_name,
-                    "description": recipe_description,
-                    "ingredients": recipe_dict.get("ingredients", []),
-                    "instructions": recipe_dict.get("instructions", []),
-                    "prepTime": prep_time_str,
-                    "cookTime": cook_time_str,
-                    "cookingTime": total_minutes,  # Combined time as integer
-                    "servings": recipe_dict.get("servings", 4),
-                    "difficulty": recipe_dict.get("difficulty", "Medium"),  # Ensure capitalized
-                    "cuisine": recipe_dict.get("cuisine", cuisine),
-                    "nutritionalInfo": nutrition_strings,  # All values as strings
-                    "tags": recipe_dict.get("tags", []),
-                    "tips": recipe_dict.get("tips", []),
-                    "imageName": image_url,  # Changed from imageUrl to imageName - Should now be Firebase Storage URL
-                    "matchScore": match_score,
-                    "createdAt": datetime.utcnow().isoformat(),
-                    "updatedAt": datetime.utcnow().isoformat(),
-                    "cookedCount": 0,
-                    "lastCooked": None,
-                    "rating": None,
-                    "status": "generated"
-                }
-                
-                # Store in Firebase
-                success = await firebase_service.create_document("recipes", recipe_id, recipe_data)
-                if success:
-                    recipes.append(RecipeResponse(**recipe_data))
-                    logger.info(f"Generated and stored recipe with image: {recipe_data['name']}")
-                    logger.info(f"IMAGE FIX: Recipe stored with imageName: {image_url}")
-                    if image_url and image_url.startswith('http'):
-                        logger.info(f"IMAGE FIX: Successfully stored Firebase Storage URL in database")
-                    else:
-                        logger.warning(f"IMAGE FIX: Stored what appears to be local path - check Firebase upload")
-                else:
-                    logger.error(f"Failed to store recipe: {recipe_data['name']}")
+                # Only attempt image generation if we have valid inputs
+                if recipe_name and recipe_name.strip():
+                    image_generation_attempted = True
+                    logger.debug(f"Attempting image generation for: {recipe_name}")
                     
-            except Exception as e:
-                logger.error(f"Error generating recipe for cuisine {cuisine}: {e}")
-                continue
+                    image_url = await gemini_service.generate_recipe_image(
+                        recipe_name=recipe_name,
+                        recipe_description=recipe_description or "A delicious recipe"
+                    )
+                    
+                    if image_url:
+                        logger.info(f"Successfully generated image for recipe: {recipe_name}")
+                        logger.info(f"IMAGE FIX: Received image URL from Gemini service: {image_url}")
+                        if image_url.startswith('http'):
+                            logger.info(f"IMAGE FIX: URL appears to be Firebase Storage URL - SUCCESS!")
+                        else:
+                            logger.warning(f"IMAGE FIX: URL appears to be local path - Firebase upload may have failed")
+                    else:
+                        logger.warning(f"Image generation returned None for recipe: {recipe_name}")
+                else:
+                    logger.warning(f"Skipping image generation due to invalid recipe name: '{recipe_name}'")
+                    
+            except Exception as img_error:
+                logger.error(f"Error generating image for recipe '{recipe_name}': {img_error}", exc_info=True)
+                # Continue with recipe creation even if image generation fails
+                image_url = None
+            
+            # Log final image generation status
+            if image_generation_attempted:
+                if image_url:
+                    logger.info(f"Image generation completed successfully for recipe: {recipe_name}")
+                else:
+                    logger.warning(f"Image generation failed for recipe: {recipe_name}, proceeding without image")
+            else:
+                logger.info(f"Image generation skipped for recipe: {recipe_name}")
+            
+            # Parse time values for Swift compatibility
+            prep_time_str = recipe_dict.get("prepTime", "15 minutes")
+            cook_time_str = recipe_dict.get("cookTime", "30 minutes")
+            prep_minutes = _parse_time_to_minutes(prep_time_str)
+            cook_minutes = _parse_time_to_minutes(cook_time_str)
+            total_minutes = prep_minutes + cook_minutes
+            
+            # Convert nutrition info to strings
+            nutrition_info = recipe_dict.get("nutritionalInfo", {})
+            nutrition_strings = {}
+            for key, value in nutrition_info.items():
+                if value is not None:
+                    nutrition_strings[key] = str(value)
+                else:
+                    nutrition_strings[key] = "0"
+            
+            recipe_data = {
+                "id": recipe_id,
+                "name": recipe_name,
+                "description": recipe_description,
+                "ingredients": recipe_dict.get("ingredients", []),
+                "instructions": recipe_dict.get("instructions", []),
+                "prepTime": prep_time_str,
+                "cookTime": cook_time_str,
+                "cookingTime": total_minutes,  # Combined time as integer
+                "servings": recipe_dict.get("servings", 4),
+                "difficulty": recipe_dict.get("difficulty", "Medium"),  # Ensure capitalized
+                "cuisine": recipe_dict.get("cuisine", selected_cuisine),
+                "nutritionalInfo": nutrition_strings,  # All values as strings
+                "tags": recipe_dict.get("tags", []),
+                "tips": recipe_dict.get("tips", []),
+                "imageName": image_url,  # Changed from imageUrl to imageName - Should now be Firebase Storage URL
+                "matchScore": match_score,
+                "createdAt": datetime.utcnow().isoformat(),
+                "updatedAt": datetime.utcnow().isoformat(),
+                "cookedCount": 0,
+                "lastCooked": None,
+                "rating": None,
+                "status": "generated"
+            }
+            
+            # Store in Firebase
+            logger.info(f"FIREBASE DEBUG: About to store single recipe with ID: {recipe_id}")
+            success = await firebase_service.create_document("recipes", recipe_id, recipe_data)
+            if success:
+                recipes.append(RecipeResponse(**recipe_data))
+                logger.info(f"FIREBASE DEBUG: Successfully stored recipe: {recipe_data['name']}")
+                logger.info(f"FIREBASE DEBUG: DUPLICATION FIX - stored exactly 1 recipe")
+                logger.info(f"IMAGE FIX: Recipe stored with imageName: {image_url}")
+                if image_url and image_url.startswith('http'):
+                    logger.info(f"IMAGE FIX: Successfully stored Firebase Storage URL in database")
+                else:
+                    logger.warning(f"IMAGE FIX: Stored what appears to be local path - check Firebase upload")
+            else:
+                logger.error(f"Failed to store recipe: {recipe_data['name']}")
+                
+        except Exception as e:
+            logger.error(f"Error generating recipe for cuisine {selected_cuisine}: {e}")
+        
+        logger.info(f"RECIPE GENERATION DEBUG: DUPLICATION FIX - Final result - returning {len(recipes)} recipes")
+        logger.info(f"RECIPE GENERATION DEBUG: Recipe names: {[r.name for r in recipes]}")
+        
+        if len(recipes) == 1:
+            logger.info("✅ DUPLICATION FIX SUCCESS: Generated exactly 1 recipe with 1 image")
+        else:
+            logger.warning(f"⚠️ DUPLICATION FIX ISSUE: Expected 1 recipe, got {len(recipes)}")
         
         return {"recipes": recipes}
         

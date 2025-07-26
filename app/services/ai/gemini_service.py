@@ -168,20 +168,22 @@ class GeminiService:
         Returns:
             URL of the generated image (saved locally) or None if failed
         """
+        logger.info(f"GEMINI IMAGE DEBUG: Starting image generation for recipe: {recipe_name}")
+        
         # Validate inputs first
         if not self._validate_image_generation_inputs(recipe_name, recipe_description):
-            logger.error(f"Invalid inputs for image generation: recipe_name='{recipe_name}', description='{recipe_description}'")
+            logger.error(f"GEMINI IMAGE DEBUG: Invalid inputs for image generation: recipe_name='{recipe_name}', description='{recipe_description}'")
             return self._mock_image_generation()
         
         if not self.genai_client:
-            logger.warning("Gemini client not available, using mock image generation")
+            logger.warning("GEMINI IMAGE DEBUG: Gemini client not available, using mock image generation")
             return self._mock_image_generation()
 
         try:
             # Create a safe, well-structured prompt
             prompt = self._create_safe_image_prompt(recipe_name, recipe_description)
             
-            logger.info(f"Generating image for recipe: {recipe_name}")
+            logger.info(f"GEMINI IMAGE DEBUG: About to call Gemini API for recipe: {recipe_name}")
             logger.debug(f"Using prompt: {prompt[:100]}...")
             
             # Use Gemini 2.0 image generation API with error handling
@@ -234,7 +236,7 @@ class GeminiService:
                             
                             # Upload to Firebase Storage
                             try:
-                                logger.info(f"Uploading image to Firebase Storage: {image_path}")
+                                logger.info(f"FIREBASE UPLOAD DEBUG: Starting Firebase upload for image: {image_path}")
                                 
                                 # Read the image file as bytes
                                 with open(image_path, 'rb') as img_file:
@@ -242,6 +244,7 @@ class GeminiService:
                                 
                                 # Generate a unique recipe ID for the upload
                                 recipe_id = uuid.uuid4().hex[:12]
+                                logger.info(f"FIREBASE UPLOAD DEBUG: Generated recipe_id for upload: {recipe_id}")
                                 
                                 # Upload to Firebase Storage
                                 firebase_url = await firebase_storage_service.upload_recipe_image(
@@ -250,16 +253,17 @@ class GeminiService:
                                 )
                                 
                                 if firebase_url:
-                                    logger.info(f"Successfully uploaded image to Firebase Storage: {firebase_url}")
+                                    logger.info(f"FIREBASE UPLOAD DEBUG: Successfully uploaded image to Firebase Storage: {firebase_url}")
                                     
                                     # Clean up local file after successful upload
                                     try:
                                         os.remove(image_path)
-                                        logger.info(f"Cleaned up local image file: {image_path}")
+                                        logger.info(f"FIREBASE UPLOAD DEBUG: Cleaned up local image file: {image_path}")
                                     except Exception as cleanup_error:
-                                        logger.warning(f"Failed to clean up local file {image_path}: {cleanup_error}")
+                                        logger.warning(f"FIREBASE UPLOAD DEBUG: Failed to clean up local file {image_path}: {cleanup_error}")
                                     
                                     image_saved = True
+                                    logger.info(f"GEMINI IMAGE DEBUG: Returning Firebase URL for recipe: {recipe_name}")
                                     return firebase_url
                                 else:
                                     logger.error("Firebase Storage upload returned None - falling back to local path")
