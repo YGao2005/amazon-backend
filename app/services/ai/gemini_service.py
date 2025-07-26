@@ -3,11 +3,18 @@ import logging
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import google.genai as genai_client
+from google.genai import types
+from PIL import Image
+from io import BytesIO
+import base64
 import asyncio
+import os
+import uuid
 
 from app.core.config import settings
 from app.models.recipe import (
-    RecipeCreate, RecipeGenerationRequest, RecipeIngredient, 
+    RecipeCreate, RecipeGenerationRequest, RecipeIngredient,
     RecipeStep, DifficultyLevel, MealType, NutritionInfo
 )
 
@@ -20,10 +27,13 @@ class GeminiService:
             genai.configure(api_key=self.api_key)
             self.flash_model = genai.GenerativeModel('gemini-1.5-flash')
             self.vision_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            # Initialize Gemini 2.0 client for image generation
+            self.genai_client = genai_client.Client(api_key=self.api_key)
         else:
             logger.warning("GEMINI_API_KEY not found. Using mock implementation.")
             self.flash_model = None
             self.vision_model = None
+            self.genai_client = None
 
     def _create_recipe_prompt(self, ingredients: List[str], dietary_restrictions: List[str] = None, 
                             cuisine_preference: str = None, difficulty: str = "medium") -> str:
@@ -155,48 +165,96 @@ class GeminiService:
             recipe_description: Description of the dish
             
         Returns:
-            URL of the generated image (uploaded to Firebase Storage) or None if failed
+            URL of the generated image (saved locally) or None if failed
         """
-        if not self.vision_model:
+        # Validate inputs first
+        if not self._validate_image_generation_inputs(recipe_name, recipe_description):
+            logger.error(f"Invalid inputs for image generation: recipe_name='{recipe_name}', description='{recipe_description}'")
+            return self._mock_image_generation()
+        
+        if not self.genai_client:
+            logger.warning("Gemini client not available, using mock image generation")
             return self._mock_image_generation()
 
         try:
-            # Create a detailed prompt for food photography
-            prompt = f"""
-            Generate a high-quality, professional food photography image of {recipe_name}.
+            # Create a safe, well-structured prompt
+            prompt = self._create_safe_image_prompt(recipe_name, recipe_description)
             
-            Description: {recipe_description}
+            logger.info(f"Generating image for recipe: {recipe_name}")
+            logger.debug(f"Using prompt: {prompt[:100]}...")
             
-            Style requirements:
-            - Professional food photography
-            - Well-lit, appetizing presentation
-            - Clean, modern plating
-            - Warm, inviting colors
-            - Sharp focus on the food
-            - Minimal, elegant background
-            - Restaurant-quality presentation
-            
-            The image should make the dish look delicious and appealing, suitable for a recipe app.
-            """
-            
-            response = self.vision_model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.8,
-                    max_output_tokens=1000,
+            # Use Gemini 2.0 image generation API with error handling
+            try:
+                response = self.genai_client.models.generate_content(
+                    model="gemini-2.0-flash-preview-image-generation",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=['TEXT', 'IMAGE']
+                    )
                 )
-            )
+            except Exception as api_error:
+                logger.error(f"Gemini API call failed: {api_error}")
+                return self._mock_image_generation()
             
-            # Note: Gemini 2.0 image generation is still in development
-            # For now, we'll return a mock URL and implement actual image generation
-            # when the API becomes available
+            # Validate response structure
+            if not response or not response.candidates:
+                logger.error("Invalid response structure from Gemini API")
+                return self._mock_image_generation()
             
-            logger.info(f"Generated image prompt for {recipe_name}")
-            return self._mock_image_generation()
+            # Process the response to extract and save the image
+            image_saved = False
+            for part in response.candidates[0].content.parts:
+                if part.inline_data is not None:
+                    try:
+                        # Convert image data to PIL Image
+                        image = Image.open(BytesIO(part.inline_data.data))
+                        
+                        # Validate image
+                        if image.size[0] < 100 or image.size[1] < 100:
+                            logger.warning(f"Generated image too small: {image.size}")
+                            continue
+                        
+                        # Create images directory if it doesn't exist
+                        images_dir = "generated_images"
+                        os.makedirs(images_dir, exist_ok=True)
+                        
+                        # Generate safe filename
+                        safe_name = "".join(c for c in recipe_name if c.isalnum() or c in (' ', '-', '_')).strip()
+                        safe_name = safe_name.replace(' ', '_').lower()[:50]  # Limit length
+                        image_filename = f"recipe_{uuid.uuid4().hex[:8]}_{safe_name}.png"
+                        image_path = os.path.join(images_dir, image_filename)
+                        
+                        # Save the image with error handling
+                        image.save(image_path, "PNG", optimize=True)
+                        
+                        # Verify file was saved successfully
+                        if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+                            logger.info(f"Successfully generated and saved image: {image_path} (size: {image.size})")
+                            image_saved = True
+                            # Return the local file path (in a real app, you'd upload to cloud storage)
+                            return f"/{image_path}"
+                        else:
+                            logger.error(f"Failed to save image file: {image_path}")
+                            
+                    except Exception as img_error:
+                        logger.error(f"Error processing image data: {img_error}")
+                        continue
+                        
+                elif part.text is not None:
+                    logger.info(f"Generated image description: {part.text[:100]}...")
+            
+            if not image_saved:
+                logger.warning("No valid image data found in Gemini response")
+                return self._mock_image_generation()
             
         except Exception as e:
-            logger.error(f"Error generating recipe image: {e}")
+            logger.error(f"Unexpected error in generate_recipe_image: {e}", exc_info=True)
+            # Fall back to mock generation on error
             return self._mock_image_generation()
+        
+        # Should not reach here, but just in case
+        logger.error("Reached end of generate_recipe_image without returning")
+        return self._mock_image_generation()
 
     # Legacy method for compatibility with existing recipe_generator.py interface
     async def generate_recipe_legacy(self, request: RecipeGenerationRequest) -> Dict[str, Any]:
@@ -547,8 +605,72 @@ class GeminiService:
 
     def _mock_image_generation(self) -> str:
         """Mock image generation - returns a placeholder image URL."""
+        logger.info("Using mock image generation - returning placeholder URL")
         # In a real implementation, this would upload to Firebase Storage
         return "https://via.placeholder.com/400x300/FF6B6B/FFFFFF?text=Delicious+Recipe"
+    
+    def _validate_image_generation_inputs(self, recipe_name: str, recipe_description: str) -> bool:
+        """
+        Validate inputs for image generation
+        
+        Args:
+            recipe_name: Name of the recipe
+            recipe_description: Description of the dish
+            
+        Returns:
+            True if inputs are valid, False otherwise
+        """
+        if not recipe_name or not recipe_name.strip():
+            logger.error("Recipe name is empty or None")
+            return False
+            
+        if not recipe_description or not recipe_description.strip():
+            logger.warning("Recipe description is empty - using recipe name only")
+            
+        # Check for potentially problematic content
+        problematic_terms = ['nsfw', 'explicit', 'inappropriate']
+        combined_text = f"{recipe_name} {recipe_description}".lower()
+        
+        for term in problematic_terms:
+            if term in combined_text:
+                logger.warning(f"Potentially problematic content detected: {term}")
+                return False
+                
+        return True
+    
+    def _create_safe_image_prompt(self, recipe_name: str, recipe_description: str) -> str:
+        """
+        Create a safe, well-structured prompt for image generation
+        
+        Args:
+            recipe_name: Name of the recipe
+            recipe_description: Description of the dish
+            
+        Returns:
+            Safe prompt string for image generation
+        """
+        # Sanitize inputs
+        safe_name = recipe_name.strip()[:100]  # Limit length
+        safe_description = recipe_description.strip()[:500] if recipe_description else ""
+        
+        prompt = f"""Create a high-quality, professional food photography image of {safe_name}.
+
+Description: {safe_description}
+
+Style requirements:
+- Professional food photography with excellent lighting
+- Appetizing presentation on elegant dishware
+- Clean, modern plating with artistic arrangement
+- Warm, inviting colors that enhance appetite appeal
+- Sharp focus on the food with shallow depth of field
+- Minimal, clean background (white or neutral tones)
+- Restaurant-quality presentation
+- High resolution and crisp details
+- Family-friendly and appropriate content only
+
+The image should make the dish look absolutely delicious and appealing, perfect for a modern recipe application. Focus on the food presentation and avoid any inappropriate or non-food related content."""
+
+        return prompt
 
     async def get_recipe_suggestions(self, ingredients: List[str], count: int = 3) -> List[Dict[str, Any]]:
         """

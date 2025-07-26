@@ -100,12 +100,53 @@ async def generate_recipes(request: GenerateRecipeRequest):
                 # Calculate match score based on available ingredients
                 match_score = calculate_match_score(recipe_dict.get("ingredients", []), available_ingredients)
                 
-                # Create recipe ID and store in Firebase
+                # Create recipe ID
                 recipe_id = str(uuid.uuid4())
+                recipe_name = recipe_dict.get("name", "Generated Recipe")
+                recipe_description = recipe_dict.get("description", "")
+                
+                # Generate image for the recipe with comprehensive error handling
+                logger.info(f"Generating image for recipe: {recipe_name}")
+                image_url = None
+                image_generation_attempted = False
+                
+                try:
+                    # Only attempt image generation if we have valid inputs
+                    if recipe_name and recipe_name.strip():
+                        image_generation_attempted = True
+                        logger.debug(f"Attempting image generation for: {recipe_name}")
+                        
+                        image_url = await gemini_service.generate_recipe_image(
+                            recipe_name=recipe_name,
+                            recipe_description=recipe_description or "A delicious recipe"
+                        )
+                        
+                        if image_url:
+                            logger.info(f"Successfully generated image for recipe: {recipe_name}")
+                            logger.debug(f"Image URL: {image_url}")
+                        else:
+                            logger.warning(f"Image generation returned None for recipe: {recipe_name}")
+                    else:
+                        logger.warning(f"Skipping image generation due to invalid recipe name: '{recipe_name}'")
+                        
+                except Exception as img_error:
+                    logger.error(f"Error generating image for recipe '{recipe_name}': {img_error}", exc_info=True)
+                    # Continue with recipe creation even if image generation fails
+                    image_url = None
+                
+                # Log final image generation status
+                if image_generation_attempted:
+                    if image_url:
+                        logger.info(f"Image generation completed successfully for recipe: {recipe_name}")
+                    else:
+                        logger.warning(f"Image generation failed for recipe: {recipe_name}, proceeding without image")
+                else:
+                    logger.info(f"Image generation skipped for recipe: {recipe_name}")
+                
                 recipe_data = {
                     "id": recipe_id,
-                    "name": recipe_dict.get("name", "Generated Recipe"),
-                    "description": recipe_dict.get("description", ""),
+                    "name": recipe_name,
+                    "description": recipe_description,
                     "ingredients": recipe_dict.get("ingredients", []),
                     "instructions": recipe_dict.get("instructions", []),
                     "prepTime": recipe_dict.get("prepTime", "15 minutes"),
@@ -117,7 +158,7 @@ async def generate_recipes(request: GenerateRecipeRequest):
                     "nutritionalInfo": recipe_dict.get("nutritionalInfo", {}),
                     "tags": recipe_dict.get("tags", []),
                     "tips": recipe_dict.get("tips", []),
-                    "imageUrl": None,
+                    "imageUrl": image_url,  # Now includes generated image URL
                     "matchScore": match_score,
                     "createdAt": datetime.utcnow().isoformat(),
                     "updatedAt": datetime.utcnow().isoformat(),
@@ -131,7 +172,7 @@ async def generate_recipes(request: GenerateRecipeRequest):
                 success = await firebase_service.create_document("recipes", recipe_id, recipe_data)
                 if success:
                     recipes.append(RecipeResponse(**recipe_data))
-                    logger.info(f"Generated and stored recipe: {recipe_data['name']}")
+                    logger.info(f"Generated and stored recipe with image: {recipe_data['name']}")
                 else:
                     logger.error(f"Failed to store recipe: {recipe_data['name']}")
                     
