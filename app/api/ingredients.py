@@ -212,43 +212,94 @@ async def scan_ingredients(request: ScanRequest):
                 # Guess category
                 category = _guess_ingredient_category(ingredient_data['name'])
                 
-                # Create ingredient object for storage
-                ingredient_create = IngredientCreate(
-                    name=ingredient_data['name'],
-                    category=category,
-                    quantity=quantity_amount,
-                    unit=quantity_unit,
-                    expiration_date=estimated_expiration,
-                    purchase_date=current_date,
-                    location="fridge",  # Default location for scanned items
-                    notes=f"Scanned from image, confidence: {ingredient_data.get('confidence', 0.8):.2f}"
-                )
+                # Check if ingredient already exists (case-insensitive)
+                existing_ingredient = await _find_existing_ingredient_by_name(ingredient_data['name'])
                 
-                # Store in Firebase
-                ingredient_id = str(uuid.uuid4())
-                ingredient_data_dict = ingredient_create.dict()
-                ingredient_data_dict.update({
-                    "id": ingredient_id,
-                    "created_at": current_date,
-                    "updated_at": current_date
-                })
-                
-                success = await firebase_service.create_document("ingredients", ingredient_id, ingredient_data_dict)
-                if success:
-                    # Create the response format that matches Swift expectations
-                    scanned_ingredient = ScannedIngredient(
-                        name=ingredient_data['name'],
-                        quantity=QuantityInfo(
-                            amount=quantity_amount,
-                            unit=quantity_unit
-                        ),
-                        estimatedExpiration=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
-                        category=category.value  # Include the category in the response
-                    )
-                    scanned_ingredients.append(scanned_ingredient)
-                    logger.info(f"Successfully stored ingredient: {ingredient_data['name']}")
+                if existing_ingredient:
+                    # Update existing ingredient by merging quantities
+                    ingredient_id = existing_ingredient["id"]
+                    existing_quantity = existing_ingredient.get("quantity", 0)
+                    existing_unit = existing_ingredient.get("unit", quantity_unit)
+                    existing_expiration = existing_ingredient.get("expiration_date")
+                    
+                    # Merge quantities (only if units match, otherwise keep separate)
+                    if existing_unit.lower() == quantity_unit.lower():
+                        new_quantity = existing_quantity + quantity_amount
+                    else:
+                        # If units don't match, keep the new quantity and unit
+                        new_quantity = quantity_amount
+                        quantity_unit = quantity_unit
+                    
+                    # Use the earlier expiration date (more conservative approach)
+                    if existing_expiration:
+                        existing_exp_date = datetime.fromisoformat(existing_expiration.replace('Z', '+00:00')) if isinstance(existing_expiration, str) else existing_expiration
+                        final_expiration = min(estimated_expiration, existing_exp_date)
+                    else:
+                        final_expiration = estimated_expiration
+                    
+                    # Prepare update data
+                    update_data = {
+                        "quantity": new_quantity,
+                        "unit": quantity_unit,
+                        "expiration_date": final_expiration,
+                        "updated_at": current_date,
+                        "notes": f"Updated from scan, confidence: {ingredient_data.get('confidence', 0.8):.2f}. Previous quantity: {existing_quantity} {existing_unit}"
+                    }
+                    
+                    success = await firebase_service.update_document("ingredients", ingredient_id, update_data)
+                    if success:
+                        # Create the response format that matches Swift expectations
+                        scanned_ingredient = ScannedIngredient(
+                            name=ingredient_data['name'],
+                            quantity=QuantityInfo(
+                                amount=new_quantity,
+                                unit=quantity_unit
+                            ),
+                            estimatedExpiration=final_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
+                            category=category.value  # Include the category in the response
+                        )
+                        scanned_ingredients.append(scanned_ingredient)
+                        logger.info(f"Successfully updated existing ingredient: {ingredient_data['name']} (quantity: {existing_quantity} -> {new_quantity})")
+                    else:
+                        logger.error(f"Failed to update existing ingredient: {ingredient_data['name']}")
                 else:
-                    logger.error(f"Failed to store ingredient: {ingredient_data['name']}")
+                    # Create new ingredient
+                    ingredient_create = IngredientCreate(
+                        name=ingredient_data['name'],
+                        category=category,
+                        quantity=quantity_amount,
+                        unit=quantity_unit,
+                        expiration_date=estimated_expiration,
+                        purchase_date=current_date,
+                        location="fridge",  # Default location for scanned items
+                        notes=f"Scanned from image, confidence: {ingredient_data.get('confidence', 0.8):.2f}"
+                    )
+                    
+                    # Store in Firebase
+                    ingredient_id = str(uuid.uuid4())
+                    ingredient_data_dict = ingredient_create.dict()
+                    ingredient_data_dict.update({
+                        "id": ingredient_id,
+                        "created_at": current_date,
+                        "updated_at": current_date
+                    })
+                    
+                    success = await firebase_service.create_document("ingredients", ingredient_id, ingredient_data_dict)
+                    if success:
+                        # Create the response format that matches Swift expectations
+                        scanned_ingredient = ScannedIngredient(
+                            name=ingredient_data['name'],
+                            quantity=QuantityInfo(
+                                amount=quantity_amount,
+                                unit=quantity_unit
+                            ),
+                            estimatedExpiration=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
+                            category=category.value  # Include the category in the response
+                        )
+                        scanned_ingredients.append(scanned_ingredient)
+                        logger.info(f"Successfully created new ingredient: {ingredient_data['name']}")
+                    else:
+                        logger.error(f"Failed to create new ingredient: {ingredient_data['name']}")
                     
             except Exception as e:
                 logger.error(f"Error processing ingredient {ingredient_data.get('name', 'unknown')}: {e}")
@@ -400,6 +451,28 @@ async def get_expiring_ingredients(days: int = 3):
         raise HTTPException(status_code=500, detail=f"Error fetching expiring ingredients: {str(e)}")
 
 # Helper functions
+async def _find_existing_ingredient_by_name(name: str) -> Optional[Dict[str, Any]]:
+    """Find existing ingredient by name (case-insensitive)"""
+    try:
+        # Query for ingredients with matching name (case-insensitive)
+        existing_ingredients = await firebase_service.query_collection(
+            "ingredients", "name", "==", name
+        )
+        
+        if existing_ingredients:
+            return existing_ingredients[0]  # Return the first match
+        
+        # If no exact match, try case-insensitive search
+        all_ingredients = await firebase_service.get_collection("ingredients")
+        for ingredient in all_ingredients:
+            if ingredient.get("name", "").lower() == name.lower():
+                return ingredient
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error finding existing ingredient by name '{name}': {e}")
+        return None
+
 def _parse_expiration_days(expiration_str: str) -> int:
     """Parse expiration string to number of days"""
     expiration_lower = expiration_str.lower()
