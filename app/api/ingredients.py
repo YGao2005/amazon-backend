@@ -63,13 +63,13 @@ async def get_ingredients():
                     "quantity": ingredient.quantity,
                     "unit": ingredient.unit,
                     "category": ingredient.category,
-                    "expiration_date": ingredient.expiration_date.isoformat() if ingredient.expiration_date else None,
-                    "purchase_date": ingredient.purchase_date.isoformat() if ingredient.purchase_date else None,
-                    "created_at": ingredient.created_at.isoformat() if ingredient.created_at else None,
-                    "updated_at": ingredient.updated_at.isoformat() if ingredient.updated_at else None,
+                    "expirationDate": ingredient.expiration_date.isoformat() if ingredient.expiration_date else None,
+                    "purchaseDate": ingredient.purchase_date.isoformat() if ingredient.purchase_date else None,
+                    "createdAt": ingredient.created_at.isoformat() if ingredient.created_at else None,
+                    "updatedAt": ingredient.updated_at.isoformat() if ingredient.updated_at else None,
                     "location": ingredient.location,
                     "notes": ingredient.notes,
-                    "image_url": ingredient.image_url
+                    "imageName": ingredient.image_url
                 })
             except Exception as e:
                 logger.warning(f"Error processing ingredient {ingredient_data.get('id', 'unknown')}: {e}")

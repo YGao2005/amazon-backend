@@ -4,9 +4,9 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 class DifficultyLevel(str, Enum):
-    EASY = "easy"
-    MEDIUM = "medium"
-    HARD = "hard"
+    EASY = "Easy"
+    MEDIUM = "Medium"
+    HARD = "Hard"
 
 class MealType(str, Enum):
     BREAKFAST = "breakfast"

@@ -37,14 +37,14 @@ class RecipeResponse(BaseModel):
     instructions: List[str]
     prepTime: str
     cookTime: str
-    totalTime: str
+    cookingTime: int  # Combined time in minutes for Swift
     servings: int
     difficulty: str
     cuisine: str
-    nutritionalInfo: Dict[str, Any]
+    nutritionalInfo: Dict[str, str]  # All values as strings for Swift
     tags: List[str]
     tips: List[str]
-    imageUrl: Optional[str] = None
+    imageName: Optional[str] = None  # Changed from imageUrl to imageName
     matchScore: Optional[float] = None
     createdAt: str
     updatedAt: str
@@ -143,22 +143,38 @@ async def generate_recipes(request: GenerateRecipeRequest):
                 else:
                     logger.info(f"Image generation skipped for recipe: {recipe_name}")
                 
+                # Parse time values for Swift compatibility
+                prep_time_str = recipe_dict.get("prepTime", "15 minutes")
+                cook_time_str = recipe_dict.get("cookTime", "30 minutes")
+                prep_minutes = _parse_time_to_minutes(prep_time_str)
+                cook_minutes = _parse_time_to_minutes(cook_time_str)
+                total_minutes = prep_minutes + cook_minutes
+                
+                # Convert nutrition info to strings
+                nutrition_info = recipe_dict.get("nutritionalInfo", {})
+                nutrition_strings = {}
+                for key, value in nutrition_info.items():
+                    if value is not None:
+                        nutrition_strings[key] = str(value)
+                    else:
+                        nutrition_strings[key] = "0"
+                
                 recipe_data = {
                     "id": recipe_id,
                     "name": recipe_name,
                     "description": recipe_description,
                     "ingredients": recipe_dict.get("ingredients", []),
                     "instructions": recipe_dict.get("instructions", []),
-                    "prepTime": recipe_dict.get("prepTime", "15 minutes"),
-                    "cookTime": recipe_dict.get("cookTime", "30 minutes"),
-                    "totalTime": recipe_dict.get("totalTime", "45 minutes"),
+                    "prepTime": prep_time_str,
+                    "cookTime": cook_time_str,
+                    "cookingTime": total_minutes,  # Combined time as integer
                     "servings": recipe_dict.get("servings", 4),
-                    "difficulty": recipe_dict.get("difficulty", "medium"),
+                    "difficulty": recipe_dict.get("difficulty", "Medium"),  # Ensure capitalized
                     "cuisine": recipe_dict.get("cuisine", cuisine),
-                    "nutritionalInfo": recipe_dict.get("nutritionalInfo", {}),
+                    "nutritionalInfo": nutrition_strings,  # All values as strings
                     "tags": recipe_dict.get("tags", []),
                     "tips": recipe_dict.get("tips", []),
-                    "imageUrl": image_url,  # Now includes generated image URL
+                    "imageName": image_url,  # Changed from imageUrl to imageName
                     "matchScore": match_score,
                     "createdAt": datetime.utcnow().isoformat(),
                     "updatedAt": datetime.utcnow().isoformat(),
@@ -208,7 +224,7 @@ async def generate_recipe_image(request: GenerateImageRequest):
         
         # Update recipe with image URL
         update_data = {
-            "imageUrl": image_url,
+            "imageName": image_url,  # Changed from imageUrl to imageName
             "updatedAt": datetime.utcnow().isoformat()
         }
         
@@ -218,7 +234,7 @@ async def generate_recipe_image(request: GenerateImageRequest):
         
         return {
             "success": True,
-            "imageUrl": image_url,
+            "imageName": image_url,  # Changed from imageUrl to imageName
             "message": "Recipe image generated successfully"
         }
         
@@ -264,22 +280,42 @@ async def get_recipes(
         recipes = []
         for recipe_data in filtered_recipes:
             try:
+                # Parse time values for Swift compatibility
+                prep_time_str = recipe_data.get("prepTime", "15 minutes")
+                cook_time_str = recipe_data.get("cookTime", "30 minutes")
+                cooking_time = recipe_data.get("cookingTime")
+                
+                # If cookingTime not stored, calculate it
+                if cooking_time is None:
+                    prep_minutes = _parse_time_to_minutes(prep_time_str)
+                    cook_minutes = _parse_time_to_minutes(cook_time_str)
+                    cooking_time = prep_minutes + cook_minutes
+                
+                # Convert nutrition info to strings
+                nutrition_info = recipe_data.get("nutritionalInfo", {})
+                nutrition_strings = {}
+                for key, value in nutrition_info.items():
+                    if value is not None:
+                        nutrition_strings[key] = str(value)
+                    else:
+                        nutrition_strings[key] = "0"
+                
                 recipe_response = RecipeResponse(
                     id=recipe_data.get("id", ""),
                     name=recipe_data.get("name", ""),
                     description=recipe_data.get("description", ""),
                     ingredients=recipe_data.get("ingredients", []),
                     instructions=recipe_data.get("instructions", []),
-                    prepTime=recipe_data.get("prepTime", ""),
-                    cookTime=recipe_data.get("cookTime", ""),
-                    totalTime=recipe_data.get("totalTime", ""),
+                    prepTime=prep_time_str,
+                    cookTime=cook_time_str,
+                    cookingTime=cooking_time,
                     servings=recipe_data.get("servings", 1),
-                    difficulty=recipe_data.get("difficulty", "medium"),
+                    difficulty=recipe_data.get("difficulty", "Medium"),  # Ensure capitalized
                     cuisine=recipe_data.get("cuisine", ""),
-                    nutritionalInfo=recipe_data.get("nutritionalInfo", {}),
+                    nutritionalInfo=nutrition_strings,  # All values as strings
                     tags=recipe_data.get("tags", []),
                     tips=recipe_data.get("tips", []),
-                    imageUrl=recipe_data.get("imageUrl"),
+                    imageName=recipe_data.get("imageName") or recipe_data.get("imageUrl"),  # Support both field names
                     matchScore=recipe_data.get("matchScore"),
                     createdAt=recipe_data.get("createdAt", ""),
                     updatedAt=recipe_data.get("updatedAt", ""),
@@ -440,3 +476,27 @@ def convert_units(from_unit: str, to_unit: str, quantity: float) -> float:
     
     conversion_factor = conversions.get((from_unit.lower(), to_unit.lower()), 1.0)
     return quantity * conversion_factor
+
+def _parse_time_to_minutes(time_str: str) -> int:
+    """Parse time string like '15 minutes' or '1 hour' to minutes"""
+    try:
+        import re
+        time_lower = time_str.lower()
+        
+        # Extract numbers from the string
+        numbers = re.findall(r'\d+', time_str)
+        if not numbers:
+            return 30  # Default to 30 minutes
+        
+        value = int(numbers[0])
+        
+        # Check for time units
+        if 'hour' in time_lower:
+            return value * 60
+        elif 'minute' in time_lower or 'min' in time_lower:
+            return value
+        else:
+            # If no unit specified, assume minutes
+            return value
+    except:
+        return 30  # Default to 30 minutes
