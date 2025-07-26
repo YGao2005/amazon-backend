@@ -21,7 +21,7 @@ class FirebaseService:
             cred_dict = settings.firebase_credentials
             cred = credentials.Certificate(cred_dict)
             firebase_admin.initialize_app(cred, {
-                'storageBucket': f"{settings.FIREBASE_PROJECT_ID}.appspot.com"
+                'storageBucket': f"{settings.FIREBASE_PROJECT_ID}.firebasestorage.app"
             })
         
         # Initialize Firestore and Storage
