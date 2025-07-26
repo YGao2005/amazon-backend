@@ -1,0 +1,26 @@
+# Web Framework and Server
+fastapi==0.116.1
+uvicorn==0.35.0
+
+# Firebase Services
+firebase-admin==7.0.0
+
+# Data Validation and Settings
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# Environment Configuration
+python-dotenv==1.1.1
+
+# HTTP and File Upload Support
+python-multipart==0.0.20
+
+# Image Processing
+pillow==11.3.0
+
+# AI Services
+groq==0.30.0
+google-generativeai==0.8.5
+
+# HTTP Client (used by AI services)
+requests==2.32.4
