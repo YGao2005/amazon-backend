@@ -17,6 +17,7 @@ from app.models.recipe import (
     RecipeCreate, RecipeGenerationRequest, RecipeIngredient,
     RecipeStep, DifficultyLevel, MealType, NutritionInfo
 )
+from app.services.firebase.storage import firebase_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -230,9 +231,48 @@ class GeminiService:
                         # Verify file was saved successfully
                         if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
                             logger.info(f"Successfully generated and saved image: {image_path} (size: {image.size})")
-                            image_saved = True
-                            # Return the local file path (in a real app, you'd upload to cloud storage)
-                            return f"/{image_path}"
+                            
+                            # Upload to Firebase Storage
+                            try:
+                                logger.info(f"Uploading image to Firebase Storage: {image_path}")
+                                
+                                # Read the image file as bytes
+                                with open(image_path, 'rb') as img_file:
+                                    image_bytes = img_file.read()
+                                
+                                # Generate a unique recipe ID for the upload
+                                recipe_id = uuid.uuid4().hex[:12]
+                                
+                                # Upload to Firebase Storage
+                                firebase_url = await firebase_storage_service.upload_recipe_image(
+                                    image_data=image_bytes,
+                                    recipe_id=recipe_id
+                                )
+                                
+                                if firebase_url:
+                                    logger.info(f"Successfully uploaded image to Firebase Storage: {firebase_url}")
+                                    
+                                    # Clean up local file after successful upload
+                                    try:
+                                        os.remove(image_path)
+                                        logger.info(f"Cleaned up local image file: {image_path}")
+                                    except Exception as cleanup_error:
+                                        logger.warning(f"Failed to clean up local file {image_path}: {cleanup_error}")
+                                    
+                                    image_saved = True
+                                    return firebase_url
+                                else:
+                                    logger.error("Firebase Storage upload returned None - falling back to local path")
+                                    # Fall back to local path if Firebase upload fails
+                                    image_saved = True
+                                    return f"/{image_path}"
+                                    
+                            except Exception as upload_error:
+                                logger.error(f"Failed to upload image to Firebase Storage: {upload_error}")
+                                # Fall back to local path if Firebase upload fails
+                                logger.info(f"Falling back to local path: /{image_path}")
+                                image_saved = True
+                                return f"/{image_path}"
                         else:
                             logger.error(f"Failed to save image file: {image_path}")
                             

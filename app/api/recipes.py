@@ -123,7 +123,11 @@ async def generate_recipes(request: GenerateRecipeRequest):
                         
                         if image_url:
                             logger.info(f"Successfully generated image for recipe: {recipe_name}")
-                            logger.debug(f"Image URL: {image_url}")
+                            logger.info(f"IMAGE FIX: Received image URL from Gemini service: {image_url}")
+                            if image_url.startswith('http'):
+                                logger.info(f"IMAGE FIX: URL appears to be Firebase Storage URL - SUCCESS!")
+                            else:
+                                logger.warning(f"IMAGE FIX: URL appears to be local path - Firebase upload may have failed")
                         else:
                             logger.warning(f"Image generation returned None for recipe: {recipe_name}")
                     else:
@@ -174,7 +178,7 @@ async def generate_recipes(request: GenerateRecipeRequest):
                     "nutritionalInfo": nutrition_strings,  # All values as strings
                     "tags": recipe_dict.get("tags", []),
                     "tips": recipe_dict.get("tips", []),
-                    "imageName": image_url,  # Changed from imageUrl to imageName
+                    "imageName": image_url,  # Changed from imageUrl to imageName - Should now be Firebase Storage URL
                     "matchScore": match_score,
                     "createdAt": datetime.utcnow().isoformat(),
                     "updatedAt": datetime.utcnow().isoformat(),
@@ -189,6 +193,11 @@ async def generate_recipes(request: GenerateRecipeRequest):
                 if success:
                     recipes.append(RecipeResponse(**recipe_data))
                     logger.info(f"Generated and stored recipe with image: {recipe_data['name']}")
+                    logger.info(f"IMAGE FIX: Recipe stored with imageName: {image_url}")
+                    if image_url and image_url.startswith('http'):
+                        logger.info(f"IMAGE FIX: Successfully stored Firebase Storage URL in database")
+                    else:
+                        logger.warning(f"IMAGE FIX: Stored what appears to be local path - check Firebase upload")
                 else:
                     logger.error(f"Failed to store recipe: {recipe_data['name']}")
                     
