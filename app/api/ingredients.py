@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 import uuid
 import base64
@@ -25,7 +25,17 @@ class ScanRequest(BaseModel):
 class UpdateRequest(BaseModel):
     ingredients: List[IngredientCreate]
 
-# Response models
+# Response models for scan endpoint
+class QuantityInfo(BaseModel):
+    amount: float
+    unit: str
+
+class ScannedIngredient(BaseModel):
+    name: str
+    quantity: QuantityInfo
+    estimatedExpiration: Optional[str] = None
+
+# Legacy response models (keeping for backward compatibility if needed)
 class ScanResponseIngredient(BaseModel):
     name: str
     quantity: str
@@ -148,7 +158,7 @@ async def delete_ingredient(ingredient_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error deleting ingredient: {str(e)}")
 
-@router.post("/scan")
+@router.post("/scan", response_model=List[ScannedIngredient])
 async def scan_ingredients(request: ScanRequest):
     """Scan fridge contents from photo using Groq Llama Vision"""
     try:
@@ -180,10 +190,10 @@ async def scan_ingredients(request: ScanRequest):
         
         if not recognized_ingredients:
             logger.warning("No ingredients recognized in image")
-            return {"ingredients": []}
+            return []
         
         # Process and store recognized ingredients in Firebase
-        stored_ingredients = []
+        scanned_ingredients = []
         current_date = datetime.now()
         
         for ingredient_data in recognized_ingredients:
@@ -193,20 +203,20 @@ async def scan_ingredients(request: ScanRequest):
                 expiration_days = _parse_expiration_days(expiration_str)
                 estimated_expiration = current_date + timedelta(days=expiration_days)
                 
-                # Parse quantity and unit
+                # Parse quantity and unit using existing helper functions
                 quantity_str = ingredient_data.get('quantity', '1 unit')
-                quantity = _parse_quantity_value(quantity_str)
-                unit = _parse_unit_value(quantity_str)
+                quantity_amount = _parse_quantity_value(quantity_str)
+                quantity_unit = _parse_unit_value(quantity_str)
                 
                 # Guess category
                 category = _guess_ingredient_category(ingredient_data['name'])
                 
-                # Create ingredient object
+                # Create ingredient object for storage
                 ingredient_create = IngredientCreate(
                     name=ingredient_data['name'],
                     category=category,
-                    quantity=quantity,
-                    unit=unit,
+                    quantity=quantity_amount,
+                    unit=quantity_unit,
                     expiration_date=estimated_expiration,
                     purchase_date=current_date,
                     location="fridge",  # Default location for scanned items
@@ -224,13 +234,16 @@ async def scan_ingredients(request: ScanRequest):
                 
                 success = await firebase_service.create_document("ingredients", ingredient_id, ingredient_data_dict)
                 if success:
-                    stored_ingredient = {
-                        "name": ingredient_data['name'],
-                        "quantity": quantity_str,
-                        "estimatedExpiration": expiration_str,
-                        "confidence": ingredient_data.get('confidence', 0.8)
-                    }
-                    stored_ingredients.append(stored_ingredient)
+                    # Create the response format that matches Swift expectations
+                    scanned_ingredient = ScannedIngredient(
+                        name=ingredient_data['name'],
+                        quantity=QuantityInfo(
+                            amount=quantity_amount,
+                            unit=quantity_unit
+                        ),
+                        estimatedExpiration=estimated_expiration.isoformat() + "Z"  # ISO8601 format with Z suffix
+                    )
+                    scanned_ingredients.append(scanned_ingredient)
                     logger.info(f"Successfully stored ingredient: {ingredient_data['name']}")
                 else:
                     logger.error(f"Failed to store ingredient: {ingredient_data['name']}")
@@ -239,7 +252,7 @@ async def scan_ingredients(request: ScanRequest):
                 logger.error(f"Error processing ingredient {ingredient_data.get('name', 'unknown')}: {e}")
                 continue
         
-        return {"ingredients": stored_ingredients}
+        return scanned_ingredients
         
     except HTTPException:
         raise
