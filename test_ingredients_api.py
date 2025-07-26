@@ -28,7 +28,7 @@ def test_update_request():
     ingredients = [
         IngredientCreate(
             name="Test Tomatoes",
-            category=IngredientCategory.VEGETABLE,
+            category=IngredientCategory.PRODUCE,
             quantity=3.0,
             unit="pieces",
             expiration_date=datetime.now(),
@@ -74,8 +74,8 @@ def test_helper_functions():
     print("✓ Unit parsing works")
     
     # Test category guessing
-    assert _guess_ingredient_category("apple") == IngredientCategory.FRUIT
-    assert _guess_ingredient_category("tomato") == IngredientCategory.VEGETABLE
+    assert _guess_ingredient_category("apple") == IngredientCategory.PRODUCE
+    assert _guess_ingredient_category("tomato") == IngredientCategory.PRODUCE
     assert _guess_ingredient_category("milk") == IngredientCategory.DAIRY
     print("✓ Category guessing works")
 
@@ -95,7 +95,7 @@ async def test_api_integration():
         ingredients = [
             IngredientCreate(
                 name="Test Apple",
-                category=IngredientCategory.FRUIT,
+                category=IngredientCategory.PRODUCE,
                 quantity=2.0,
                 unit="pieces",
                 location="fridge"

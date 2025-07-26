@@ -51,7 +51,7 @@ def test_model_creation():
         # Test ingredient creation
         ingredient = IngredientCreate(
             name="Tomato",
-            category=IngredientCategory.VEGETABLE,
+            category=IngredientCategory.PRODUCE,
             quantity=2.0,
             unit="pieces"
         )
