@@ -31,10 +31,17 @@ class QuantityInfo(BaseModel):
     unit: str
 
 class ScannedIngredient(BaseModel):
+    id: str
     name: str
     quantity: QuantityInfo
     estimatedExpiration: Optional[str] = None
     category: str
+    purchaseDate: Optional[str] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+    imageName: Optional[str] = None
 
 # Legacy response models (keeping for backward compatibility if needed)
 class ScanResponseIngredient(BaseModel):
@@ -250,13 +257,20 @@ async def scan_ingredients(request: ScanRequest):
                     if success:
                         # Create the response format that matches Swift expectations
                         scanned_ingredient = ScannedIngredient(
+                            id=ingredient_id,
                             name=ingredient_data['name'],
                             quantity=QuantityInfo(
                                 amount=new_quantity,
                                 unit=quantity_unit
                             ),
                             estimatedExpiration=final_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
-                            category=category.value  # Include the category in the response
+                            category=category.value,  # Include the category in the response
+                            purchaseDate=existing_ingredient.get('purchase_date').isoformat() + "Z" if existing_ingredient.get('purchase_date') else None,
+                            location=existing_ingredient.get('location'),
+                            notes=update_data['notes'],
+                            createdAt=existing_ingredient.get('created_at').isoformat() + "Z" if existing_ingredient.get('created_at') else None,
+                            updatedAt=current_date.isoformat() + "Z",
+                            imageName=existing_ingredient.get('image_url')
                         )
                         scanned_ingredients.append(scanned_ingredient)
                         logger.info(f"Successfully updated existing ingredient: {ingredient_data['name']} (quantity: {existing_quantity} -> {new_quantity})")
@@ -288,13 +302,20 @@ async def scan_ingredients(request: ScanRequest):
                     if success:
                         # Create the response format that matches Swift expectations
                         scanned_ingredient = ScannedIngredient(
+                            id=ingredient_id,
                             name=ingredient_data['name'],
                             quantity=QuantityInfo(
                                 amount=quantity_amount,
                                 unit=quantity_unit
                             ),
                             estimatedExpiration=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
-                            category=category.value  # Include the category in the response
+                            category=category.value,  # Include the category in the response
+                            purchaseDate=current_date.isoformat() + "Z",
+                            location="fridge",  # Default location for scanned items
+                            notes=f"Scanned from image, confidence: {ingredient_data.get('confidence', 0.8):.2f}",
+                            createdAt=current_date.isoformat() + "Z",
+                            updatedAt=current_date.isoformat() + "Z",
+                            imageName=None  # No image URL for newly scanned items
                         )
                         scanned_ingredients.append(scanned_ingredient)
                         logger.info(f"Successfully created new ingredient: {ingredient_data['name']}")
