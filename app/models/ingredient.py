@@ -4,14 +4,11 @@ from pydantic import BaseModel, Field
 from enum import Enum
 
 class IngredientCategory(str, Enum):
-    VEGETABLE = "vegetable"
-    FRUIT = "fruit"
-    MEAT = "meat"
+    PRODUCE = "produce"
     DAIRY = "dairy"
-    GRAIN = "grain"
-    SPICE = "spice"
-    CONDIMENT = "condiment"
-    BEVERAGE = "beverage"
+    PROTEIN = "protein"
+    GRAINS = "grains"
+    SPICES = "spices"
     OTHER = "other"
 
 class IngredientBase(BaseModel):

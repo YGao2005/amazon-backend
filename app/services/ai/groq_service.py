@@ -86,7 +86,7 @@ class GroqService:
 
             # Make API call to Groq with Llama Vision
             response = self.client.chat.completions.create(
-                model="llama-3.2-90b-vision-preview",
+                model="meta-llama/llama-4-scout-17b-16e-instruct",
                 messages=messages,
                 max_tokens=1000,
                 temperature=0.1
@@ -180,23 +180,72 @@ class GroqService:
         """Guess ingredient category based on name."""
         name_lower = ingredient_name.lower()
         
-        # Simple category mapping
-        if any(word in name_lower for word in ['apple', 'banana', 'orange', 'berry', 'grape', 'lemon', 'lime']):
-            return IngredientCategory.FRUIT
-        elif any(word in name_lower for word in ['tomato', 'onion', 'carrot', 'lettuce', 'spinach', 'potato', 'pepper']):
-            return IngredientCategory.VEGETABLE
-        elif any(word in name_lower for word in ['chicken', 'beef', 'pork', 'fish', 'turkey', 'lamb']):
-            return IngredientCategory.MEAT
-        elif any(word in name_lower for word in ['milk', 'cheese', 'yogurt', 'butter', 'cream']):
+        # Produce (fruits and vegetables)
+        produce_items = [
+            # Fruits
+            'apple', 'apples', 'banana', 'bananas', 'orange', 'oranges', 'berry', 'berries',
+            'strawberry', 'strawberries', 'blueberry', 'blueberries', 'raspberry', 'raspberries',
+            'grape', 'grapes', 'lemon', 'lemons', 'lime', 'limes', 'pear', 'pears', 'peach', 'peaches',
+            'plum', 'plums', 'cherry', 'cherries', 'mango', 'mangoes', 'pineapple', 'avocado', 'avocados',
+            'kiwi', 'melon', 'watermelon', 'cantaloupe', 'grapefruit', 'coconut', 'papaya', 'fig', 'figs',
+            # Vegetables
+            'tomato', 'tomatoes', 'onion', 'onions', 'carrot', 'carrots', 'lettuce', 'spinach',
+            'potato', 'potatoes', 'bell pepper', 'bell peppers', 'cucumber', 'cucumbers',
+            'broccoli', 'cauliflower', 'cabbage', 'celery', 'radish', 'radishes', 'beet', 'beets',
+            'corn', 'peas', 'green beans', 'asparagus', 'zucchini', 'squash', 'eggplant', 'mushroom', 'mushrooms',
+            'kale', 'arugula', 'chard', 'leek', 'leeks', 'scallion', 'scallions', 'green onion', 'shallot', 'shallots'
+        ]
+        
+        # Protein sources
+        protein_items = [
+            'chicken', 'beef', 'pork', 'fish', 'turkey', 'lamb', 'salmon', 'tuna', 'cod', 'shrimp',
+            'crab', 'lobster', 'eggs', 'egg', 'tofu', 'tempeh', 'seitan', 'beans', 'lentils', 'chickpeas',
+            'black beans', 'kidney beans', 'pinto beans', 'navy beans', 'lima beans', 'edamame',
+            'nuts', 'almonds', 'walnuts', 'pecans', 'cashews', 'peanuts', 'pistachios', 'hazelnuts',
+            'seeds', 'sunflower seeds', 'pumpkin seeds', 'chia seeds', 'flax seeds', 'hemp seeds',
+            'bacon', 'ham', 'sausage', 'ground beef', 'ground turkey', 'ground chicken', 'steak',
+            'pork chops', 'chicken breast', 'chicken thighs', 'duck', 'venison', 'bison'
+        ]
+        
+        # Dairy products
+        dairy_items = [
+            'milk', 'cheese', 'yogurt', 'butter', 'cream', 'sour cream', 'cottage cheese', 'ricotta',
+            'mozzarella', 'cheddar', 'swiss', 'parmesan', 'feta', 'goat cheese', 'cream cheese',
+            'half and half', 'heavy cream', 'whipped cream', 'ice cream', 'frozen yogurt', 'kefir',
+            'buttermilk', 'condensed milk', 'evaporated milk', 'powdered milk'
+        ]
+        
+        # Grains and starches
+        grain_items = [
+            'rice', 'bread', 'pasta', 'flour', 'oats', 'quinoa', 'barley', 'wheat', 'rye', 'millet',
+            'buckwheat', 'amaranth', 'bulgur', 'couscous', 'farro', 'spelt', 'teff', 'cornmeal',
+            'polenta', 'grits', 'cereal', 'crackers', 'bagel', 'bagels', 'muffin', 'muffins',
+            'tortilla', 'tortillas', 'pita', 'naan', 'rolls', 'buns', 'croissant', 'croissants',
+            'pancake mix', 'baking mix', 'breadcrumbs', 'oatmeal', 'granola', 'muesli'
+        ]
+        
+        # Spices and seasonings
+        spice_items = [
+            'salt', 'black pepper', 'white pepper', 'pepper', 'garlic', 'ginger', 'basil', 'oregano', 'thyme', 'rosemary', 'sage',
+            'parsley', 'cilantro', 'dill', 'mint', 'chives', 'tarragon', 'bay leaves', 'cumin',
+            'coriander', 'paprika', 'chili powder', 'cayenne', 'turmeric', 'curry powder', 'garam masala',
+            'cinnamon', 'nutmeg', 'cloves', 'allspice', 'cardamom', 'vanilla', 'extract', 'garlic powder',
+            'onion powder', 'dried herbs', 'italian seasoning', 'herbs de provence', 'everything bagel seasoning',
+            'red pepper flakes', 'black peppercorns', 'white pepper', 'sesame seeds', 'poppy seeds',
+            'mustard seed', 'fennel seeds', 'caraway seeds', 'anise', 'star anise', 'saffron'
+        ]
+        
+        # Check each category - check spices first since some items like "pepper" could be ambiguous
+        if any(item in name_lower for item in spice_items):
+            return IngredientCategory.SPICES
+        elif any(item in name_lower for item in produce_items):
+            return IngredientCategory.PRODUCE
+        elif any(item in name_lower for item in protein_items):
+            return IngredientCategory.PROTEIN
+        elif any(item in name_lower for item in dairy_items):
             return IngredientCategory.DAIRY
-        elif any(word in name_lower for word in ['rice', 'bread', 'pasta', 'flour', 'oats', 'quinoa']):
-            return IngredientCategory.GRAIN
-        elif any(word in name_lower for word in ['salt', 'pepper', 'garlic', 'ginger', 'basil', 'oregano']):
-            return IngredientCategory.SPICE
-        elif any(word in name_lower for word in ['sauce', 'oil', 'vinegar', 'ketchup', 'mustard']):
-            return IngredientCategory.CONDIMENT
-        elif any(word in name_lower for word in ['juice', 'water', 'soda', 'coffee', 'tea']):
-            return IngredientCategory.BEVERAGE
+        elif any(item in name_lower for item in grain_items):
+            return IngredientCategory.GRAINS
         else:
             return IngredientCategory.OTHER
 
@@ -275,21 +324,21 @@ class GroqService:
         mock_ingredients = [
             IngredientCreate(
                 name="Tomatoes",
-                category=IngredientCategory.VEGETABLE,
+                category=IngredientCategory.PRODUCE,
                 quantity=3.0,
                 unit="pieces",
                 notes="Fresh, red tomatoes"
             ),
             IngredientCreate(
                 name="Onion",
-                category=IngredientCategory.VEGETABLE,
+                category=IngredientCategory.PRODUCE,
                 quantity=1.0,
                 unit="pieces",
                 notes="Medium-sized yellow onion"
             ),
             IngredientCreate(
                 name="Garlic",
-                category=IngredientCategory.VEGETABLE,
+                category=IngredientCategory.SPICES,
                 quantity=4.0,
                 unit="cloves",
                 notes="Fresh garlic cloves"
