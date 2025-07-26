@@ -3,7 +3,8 @@ import base64
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from groq import Groq
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 from PIL import Image
 import io
 
@@ -14,12 +15,13 @@ logger = logging.getLogger(__name__)
 
 class GroqService:
     def __init__(self):
-        self.api_key = settings.GROQ_API_KEY
-        self.client = None
+        self.api_key = settings.GEMINI_API_KEY
+        self.vision_model = None
         if self.api_key:
-            self.client = Groq(api_key=self.api_key)
+            genai.configure(api_key=self.api_key)
+            self.vision_model = genai.GenerativeModel('gemini-2.0-flash-exp')
         else:
-            logger.warning("GROQ_API_KEY not found. Using mock implementation.")
+            logger.warning("GEMINI_API_KEY not found. Using mock implementation.")
 
     def _encode_image_to_base64(self, image_data: bytes) -> str:
         """Convert image bytes to base64 string."""
@@ -58,42 +60,36 @@ class GroqService:
         Returns:
             List of ingredient dictionaries with name, quantity, estimatedExpiration, and confidence
         """
-        if not self.client:
+        if not self.vision_model:
             return self._mock_ingredient_recognition()
 
         try:
-            # Encode image to base64
-            base64_image = self._encode_image_to_base64(image_data)
+            # Create PIL Image from bytes for Gemini
+            image = Image.open(io.BytesIO(image_data))
             
-            # Create the message with image
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": self._create_ingredient_prompt()
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        }
-                    ]
-                }
-            ]
+            # Create the prompt
+            prompt = self._create_ingredient_prompt()
+            
+            # Configure safety settings to be less restrictive for food content
+            safety_settings = {
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            }
 
-            # Make API call to Groq with Llama Vision
-            response = self.client.chat.completions.create(
-                model="meta-llama/llama-4-scout-17b-16e-instruct",
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.1
+            # Make API call to Gemini with image
+            response = self.vision_model.generate_content(
+                [prompt, image],
+                safety_settings=safety_settings,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=1000,
+                )
             )
 
             # Parse the response
-            content = response.choices[0].message.content
+            content = response.text
             
             # Extract JSON from the response
             try:
@@ -118,15 +114,15 @@ class GroqService:
                     
                     return validated_ingredients
                 else:
-                    logger.error("No valid JSON array found in Groq response")
+                    logger.error("No valid JSON array found in Gemini response")
                     return self._mock_ingredient_recognition()
                     
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON from Groq response: {e}")
+                logger.error(f"Failed to parse JSON from Gemini response: {e}")
                 return self._mock_ingredient_recognition()
 
         except Exception as e:
-            logger.error(f"Error calling Groq API: {e}")
+            logger.error(f"Error calling Gemini API: {e}")
             return self._mock_ingredient_recognition()
 
     async def detect_ingredients(self, image_data: str) -> Dict[str, Any]:
