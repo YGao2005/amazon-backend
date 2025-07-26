@@ -34,7 +34,7 @@ class ScannedIngredient(BaseModel):
     id: str
     name: str
     quantity: QuantityInfo
-    estimatedExpiration: Optional[str] = None
+    expirationDate: Optional[str] = None
     category: str
     purchaseDate: Optional[str] = None
     location: Optional[str] = None
@@ -256,6 +256,23 @@ async def scan_ingredients(request: ScanRequest):
                     success = await firebase_service.update_document("ingredients", ingredient_id, update_data)
                     if success:
                         # Create the response format that matches Swift expectations
+                        # Handle datetime conversion properly
+                        purchase_date = existing_ingredient.get('purchase_date')
+                        if purchase_date and isinstance(purchase_date, str):
+                            purchase_date_str = purchase_date if purchase_date.endswith('Z') else purchase_date + "Z"
+                        elif purchase_date:
+                            purchase_date_str = purchase_date.isoformat() + "Z"
+                        else:
+                            purchase_date_str = None
+                            
+                        created_at = existing_ingredient.get('created_at')
+                        if created_at and isinstance(created_at, str):
+                            created_at_str = created_at if created_at.endswith('Z') else created_at + "Z"
+                        elif created_at:
+                            created_at_str = created_at.isoformat() + "Z"
+                        else:
+                            created_at_str = None
+                        
                         scanned_ingredient = ScannedIngredient(
                             id=ingredient_id,
                             name=ingredient_data['name'],
@@ -263,12 +280,12 @@ async def scan_ingredients(request: ScanRequest):
                                 amount=new_quantity,
                                 unit=quantity_unit
                             ),
-                            estimatedExpiration=final_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
+                            expirationDate=final_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
                             category=category.value,  # Include the category in the response
-                            purchaseDate=existing_ingredient.get('purchase_date').isoformat() + "Z" if existing_ingredient.get('purchase_date') else None,
+                            purchaseDate=purchase_date_str,
                             location=existing_ingredient.get('location'),
                             notes=update_data['notes'],
-                            createdAt=existing_ingredient.get('created_at').isoformat() + "Z" if existing_ingredient.get('created_at') else None,
+                            createdAt=created_at_str,
                             updatedAt=current_date.isoformat() + "Z",
                             imageName=existing_ingredient.get('image_url')
                         )
@@ -308,7 +325,7 @@ async def scan_ingredients(request: ScanRequest):
                                 amount=quantity_amount,
                                 unit=quantity_unit
                             ),
-                            estimatedExpiration=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
+                            expirationDate=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
                             category=category.value,  # Include the category in the response
                             purchaseDate=current_date.isoformat() + "Z",
                             location="fridge",  # Default location for scanned items
