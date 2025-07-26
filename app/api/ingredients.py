@@ -34,6 +34,7 @@ class ScannedIngredient(BaseModel):
     name: str
     quantity: QuantityInfo
     estimatedExpiration: Optional[str] = None
+    category: str
 
 # Legacy response models (keeping for backward compatibility if needed)
 class ScanResponseIngredient(BaseModel):
@@ -241,7 +242,8 @@ async def scan_ingredients(request: ScanRequest):
                             amount=quantity_amount,
                             unit=quantity_unit
                         ),
-                        estimatedExpiration=estimated_expiration.isoformat() + "Z"  # ISO8601 format with Z suffix
+                        estimatedExpiration=estimated_expiration.isoformat() + "Z",  # ISO8601 format with Z suffix
+                        category=category.value  # Include the category in the response
                     )
                     scanned_ingredients.append(scanned_ingredient)
                     logger.info(f"Successfully stored ingredient: {ingredient_data['name']}")
